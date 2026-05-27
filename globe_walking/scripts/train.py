@@ -287,6 +287,8 @@ if __name__ == '__main__':
     parser.add_argument("--num-steps-per-env", type=int, default=None)
     parser.add_argument("--domain-rand-profile", type=str, default="repo", choices=["repo", "pretrained"])
     parser.add_argument("--physx-profile", type=str, default=None, choices=["mini", "full"])
+    parser.add_argument("--resume-run", type=str, default=None)
+    parser.add_argument("--resume-checkpoint", type=str, default="ac_weights_last.pt")
     parser.add_argument("--robot", type=str, default="go1", choices=["go1", "go2"])
 
     parser.add_argument("--dr-config", type=str, required=True, choices=["eureka", "off"])
@@ -295,7 +297,9 @@ if __name__ == '__main__':
 
     assert args.reward_config == "eureka", "Only Eureka reward is available"
 
-    resume_path = None
+    resume_path = args.resume_run
+    if args.resume_run is not None:
+        RunnerArgs.resume_checkpoint = os.path.join(args.resume_run, "checkpoints", args.resume_checkpoint)
     train_go1(
         iterations=args.iterations,
         dr_config=args.dr_config,
