@@ -196,7 +196,7 @@ def load_env(label, headless=False, dr_config="off", save_video=True):
 
 def play_go1(iterations, headless=True, label=None, dr_config="off", verbose=False, save_video=False):
     label = os.path.join(label, "checkpoints")
-    env, policy = load_env(label, headless=headless, dr_config=dr_config)
+    env, policy = load_env(label, headless=headless, dr_config=dr_config, save_video=save_video)
 
     measured_x_vels = np.zeros(iterations)
     measured_global_x_vels = np.zeros(iterations)

@@ -1,8 +1,81 @@
 import sys
 import os 
 import argparse
+import inspect
+import shutil
 
-def train_go1(iterations, dr_config, headless=True, resume_path=None, no_wandb=False, wandb_group=None):
+
+PRETRAINED_DOMAIN_RAND = {
+    "robot_friction_range": [0.1, 1.0],
+    "robot_restitution_range": [0.2, 0.8],
+    "robot_payload_mass_range": [0.0, 3.0],
+    "robot_com_displacement_range": [-0.05, 0.05],
+    "robot_motor_strength_range": [0.95, 1.05],
+    "robot_motor_offset_range": [-0.005, 0.05],
+    "ball_mass_range": [1.0, 3.0],
+    "ball_friction_range": [0.5, 2.5],
+    "ball_restitution_range": [0.4, 0.9],
+    "ball_compliance_range": [0.0, 1.0],
+    "ball_drag_range": [0.1, 0.5],
+    "terrain_ground_friction_range": [0.2, 0.8],
+    "terrain_ground_restitution_range": [0.0, 0.5],
+    "terrain_tile_roughness_range": [0.02, 0.08],
+    "robot_push_vel_range": [0.1, 0.4],
+    "ball_push_vel_range": [0.1, 0.4],
+    "gravity_range": [-0.1, 0.1],
+}
+
+
+def apply_domain_rand_profile(Cfg, profile):
+    if profile == "repo":
+        return
+    if profile != "pretrained":
+        raise ValueError(f"Invalid domain_rand_profile: {profile}")
+    for key, value in PRETRAINED_DOMAIN_RAND.items():
+        setattr(Cfg.domain_rand, key, value)
+
+
+if "dirs_exist_ok" not in inspect.signature(shutil.copytree).parameters:
+    _copytree = shutil.copytree
+
+    def _copytree_compat(src, dst, symlinks=False, ignore=None, copy_function=shutil.copy2,
+                         ignore_dangling_symlinks=False, dirs_exist_ok=False):
+        if not dirs_exist_ok or not os.path.isdir(dst):
+            return _copytree(src, dst, symlinks=symlinks, ignore=ignore,
+                             copy_function=copy_function,
+                             ignore_dangling_symlinks=ignore_dangling_symlinks)
+        names = os.listdir(src)
+        ignored_names = set(ignore(src, names)) if ignore is not None else set()
+        for name in names:
+            if name in ignored_names:
+                continue
+            src_name = os.path.join(src, name)
+            dst_name = os.path.join(dst, name)
+            if os.path.isdir(src_name):
+                _copytree_compat(src_name, dst_name, symlinks=symlinks, ignore=ignore,
+                                 copy_function=copy_function,
+                                 ignore_dangling_symlinks=ignore_dangling_symlinks,
+                                 dirs_exist_ok=True)
+            else:
+                copy_function(src_name, dst_name)
+        return dst
+
+    shutil.copytree = _copytree_compat
+
+def train_go1(
+    iterations,
+    dr_config,
+    headless=True,
+    resume_path=None,
+    no_wandb=False,
+    wandb_group=None,
+    num_envs=None,
+    record_video=True,
+    save_video_interval=None,
+    save_interval=None,
+    num_steps_per_env=None,
+    domain_rand_profile="repo",
+):
 
     import isaacgym
     assert isaacgym
@@ -36,6 +109,10 @@ def train_go1(iterations, dr_config, headless=True, resume_path=None, no_wandb=F
         raise ValueError(f"Invalid dr_config: {dr_config}")
 
     config_go1(Cfg)
+    apply_domain_rand_profile(Cfg, domain_rand_profile)
+    if num_envs is not None:
+        Cfg.env.num_envs = int(num_envs)
+    Cfg.env.record_video = bool(record_video)
 
     if resume_path:
         RunnerArgs.resume = True
@@ -106,6 +183,12 @@ def train_go1(iterations, dr_config, headless=True, resume_path=None, no_wandb=F
     AC_Args.adaptation_dims = []
 
     RunnerArgs.save_video_interval = 500
+    if save_video_interval is not None:
+        RunnerArgs.save_video_interval = int(save_video_interval)
+    if save_interval is not None:
+        RunnerArgs.save_interval = int(save_interval)
+    if num_steps_per_env is not None:
+        RunnerArgs.num_steps_per_env = int(num_steps_per_env)
 
     import wandb
     if (Cfg.multi_gpu and int(os.getenv("LOCAL_RANK", "0")) == 0) or not Cfg.multi_gpu:
@@ -179,6 +262,12 @@ if __name__ == '__main__':
     parser.add_argument("--iterations", type=int, default=50000)
     parser.add_argument("--no-wandb", action="store_true")
     parser.add_argument("--wandb-group", type=str)
+    parser.add_argument("--num-envs", type=int, default=None)
+    parser.add_argument("--no-video", action="store_true")
+    parser.add_argument("--save-video-interval", type=int, default=None)
+    parser.add_argument("--save-interval", type=int, default=None)
+    parser.add_argument("--num-steps-per-env", type=int, default=None)
+    parser.add_argument("--domain-rand-profile", type=str, default="repo", choices=["repo", "pretrained"])
 
     parser.add_argument("--dr-config", type=str, required=True, choices=["eureka", "off"])
     parser.add_argument("--reward-config", type=str, required=True, choices=["eureka"])
@@ -187,5 +276,17 @@ if __name__ == '__main__':
     assert args.reward_config == "eureka", "Only Eureka reward is available"
 
     resume_path = None
-    train_go1(iterations=args.iterations, dr_config=args.dr_config, headless=True, resume_path=resume_path, no_wandb=args.no_wandb, wandb_group=args.wandb_group)
-
+    train_go1(
+        iterations=args.iterations,
+        dr_config=args.dr_config,
+        headless=True,
+        resume_path=resume_path,
+        no_wandb=args.no_wandb,
+        wandb_group=args.wandb_group,
+        num_envs=args.num_envs,
+        record_video=not args.no_video,
+        save_video_interval=args.save_video_interval,
+        save_interval=args.save_interval,
+        num_steps_per_env=args.num_steps_per_env,
+        domain_rand_profile=args.domain_rand_profile,
+    )
