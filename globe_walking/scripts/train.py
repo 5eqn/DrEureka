@@ -76,6 +76,7 @@ def train_go1(
     save_interval=None,
     num_steps_per_env=None,
     domain_rand_profile="repo",
+    physx_profile=None,
 ):
 
     import isaacgym
@@ -109,6 +110,14 @@ def train_go1(
         Cfg.sim.physx = Cfg.sim.physx_mini
     else:
         raise ValueError(f"Invalid dr_config: {dr_config}")
+
+    if physx_profile is not None:
+        if physx_profile == "mini":
+            Cfg.sim.physx = Cfg.sim.physx_mini
+        elif physx_profile == "full":
+            Cfg.sim.physx = Cfg.sim.physx_full
+        else:
+            raise ValueError(f"Invalid physx_profile: {physx_profile}")
 
     robot_configs = {
         "go1": config_go1,
@@ -277,6 +286,7 @@ if __name__ == '__main__':
     parser.add_argument("--save-interval", type=int, default=None)
     parser.add_argument("--num-steps-per-env", type=int, default=None)
     parser.add_argument("--domain-rand-profile", type=str, default="repo", choices=["repo", "pretrained"])
+    parser.add_argument("--physx-profile", type=str, default=None, choices=["mini", "full"])
     parser.add_argument("--robot", type=str, default="go1", choices=["go1", "go2"])
 
     parser.add_argument("--dr-config", type=str, required=True, choices=["eureka", "off"])
@@ -300,4 +310,5 @@ if __name__ == '__main__':
         save_interval=args.save_interval,
         num_steps_per_env=args.num_steps_per_env,
         domain_rand_profile=args.domain_rand_profile,
+        physx_profile=args.physx_profile,
     )
