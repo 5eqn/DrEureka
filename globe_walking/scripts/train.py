@@ -77,6 +77,7 @@ def train_go1(
     num_steps_per_env=None,
     domain_rand_profile="repo",
     physx_profile=None,
+    resume_checkpoint="ac_weights_last.pt",
 ):
 
     import isaacgym
@@ -134,7 +135,7 @@ def train_go1(
     if resume_path:
         RunnerArgs.resume = True
         RunnerArgs.load_run = resume_path
-        RunnerArgs.resume_checkpoint = os.path.join(RunnerArgs.load_run, "checkpoints", "ac_weights_last.pt")
+        RunnerArgs.resume_checkpoint = os.path.join(RunnerArgs.load_run, "checkpoints", resume_checkpoint)
 
     Cfg.robot.name = robot
 
@@ -298,8 +299,6 @@ if __name__ == '__main__':
     assert args.reward_config == "eureka", "Only Eureka reward is available"
 
     resume_path = args.resume_run
-    if args.resume_run is not None:
-        RunnerArgs.resume_checkpoint = os.path.join(args.resume_run, "checkpoints", args.resume_checkpoint)
     train_go1(
         iterations=args.iterations,
         dr_config=args.dr_config,
@@ -315,4 +314,5 @@ if __name__ == '__main__':
         num_steps_per_env=args.num_steps_per_env,
         domain_rand_profile=args.domain_rand_profile,
         physx_profile=args.physx_profile,
+        resume_checkpoint=args.resume_checkpoint,
     )
