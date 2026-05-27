@@ -65,6 +65,7 @@ if "dirs_exist_ok" not in inspect.signature(shutil.copytree).parameters:
 def train_go1(
     iterations,
     dr_config,
+    robot="go1",
     headless=True,
     resume_path=None,
     no_wandb=False,
@@ -83,6 +84,7 @@ def train_go1(
 
     from globe_walking.go1_gym.envs.base.legged_robot_config import Cfg
     from globe_walking.go1_gym.envs.go1.go1_config import config_go1
+    from globe_walking.go1_gym.envs.go2.go2_config import config_go2
     from globe_walking.go1_gym.envs.go1.velocity_tracking import VelocityTrackingEasyEnv
 
     from globe_walking.go1_gym_learn.ppo_cse import Runner
@@ -108,7 +110,13 @@ def train_go1(
     else:
         raise ValueError(f"Invalid dr_config: {dr_config}")
 
-    config_go1(Cfg)
+    robot_configs = {
+        "go1": config_go1,
+        "go2": config_go2,
+    }
+    if robot not in robot_configs:
+        raise ValueError(f"Invalid robot: {robot}")
+    robot_configs[robot](Cfg)
     apply_domain_rand_profile(Cfg, domain_rand_profile)
     if num_envs is not None:
         Cfg.env.num_envs = int(num_envs)
@@ -119,7 +127,7 @@ def train_go1(
         RunnerArgs.load_run = resume_path
         RunnerArgs.resume_checkpoint = os.path.join(RunnerArgs.load_run, "checkpoints", "ac_weights_last.pt")
 
-    Cfg.robot.name = "go1"
+    Cfg.robot.name = robot
 
     Cfg.commands.num_lin_vel_bins = 30
     Cfg.commands.num_ang_vel_bins = 30
@@ -130,7 +138,8 @@ def train_go1(
 
     Cfg.commands.distributional_commands = True
 
-    Cfg.control.control_type = "actuator_net"
+    if robot == "go1":
+        Cfg.control.control_type = "actuator_net"
 
     Cfg.env.num_observation_history = 15
 
@@ -268,6 +277,7 @@ if __name__ == '__main__':
     parser.add_argument("--save-interval", type=int, default=None)
     parser.add_argument("--num-steps-per-env", type=int, default=None)
     parser.add_argument("--domain-rand-profile", type=str, default="repo", choices=["repo", "pretrained"])
+    parser.add_argument("--robot", type=str, default="go1", choices=["go1", "go2"])
 
     parser.add_argument("--dr-config", type=str, required=True, choices=["eureka", "off"])
     parser.add_argument("--reward-config", type=str, required=True, choices=["eureka"])
@@ -279,6 +289,7 @@ if __name__ == '__main__':
     train_go1(
         iterations=args.iterations,
         dr_config=args.dr_config,
+        robot=args.robot,
         headless=True,
         resume_path=resume_path,
         no_wandb=args.no_wandb,

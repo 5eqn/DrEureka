@@ -1379,9 +1379,11 @@ class LeggedRobot(BaseTask):
 
         # create robot
         from globe_walking.go1_gym.robots.go1 import Go1
+        from globe_walking.go1_gym.robots.go2 import Go2
 
         robot_classes = {
             'go1': Go1,
+            'go2': Go2,
         }
 
         self.robot = robot_classes[self.cfg.robot.name](self)
