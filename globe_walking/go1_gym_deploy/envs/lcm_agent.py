@@ -202,12 +202,15 @@ class LCMAgent():
         self.joint_pos_target += self.default_dof_pos
         joint_pos_target = self.joint_pos_target[self.joint_idxs]
         self.joint_vel_target = np.zeros(12)
+        joint_vel_target = self.joint_vel_target[self.joint_idxs]
+        p_gains = self.p_gains[self.joint_idxs]
+        d_gains = self.d_gains[self.joint_idxs]
         # print(f'cjp {self.joint_pos_target}')
 
         command_for_robot.q_des = joint_pos_target
-        command_for_robot.qd_des = self.joint_vel_target
-        command_for_robot.kp = self.p_gains
-        command_for_robot.kd = self.d_gains
+        command_for_robot.qd_des = joint_vel_target
+        command_for_robot.kp = p_gains
+        command_for_robot.kd = d_gains
         command_for_robot.tau_ff = np.zeros(12)
         command_for_robot.se_contactState = np.zeros(4)
         command_for_robot.timestamp_us = int(time.time() * 10 ** 6)

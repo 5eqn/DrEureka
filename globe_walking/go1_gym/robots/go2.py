@@ -30,10 +30,6 @@ class Go2(Robot):
         asset_options.armature = asset_config.armature
         asset_options.thickness = asset_config.thickness
         asset_options.disable_gravity = asset_config.disable_gravity
-        asset_options.vhacd_enabled = True
-        asset_options.vhacd_params = gymapi.VhacdParams()
-        asset_options.vhacd_params.resolution = 500000
-
         asset = self.env.gym.load_asset(self.env.sim, asset_root, asset_file, asset_options)
 
         self.num_dof = self.env.gym.get_asset_dof_count(asset)

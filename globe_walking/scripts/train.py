@@ -19,7 +19,7 @@ PRETRAINED_DOMAIN_RAND = {
     "ball_drag_range": [0.1, 0.5],
     "terrain_ground_friction_range": [0.2, 0.8],
     "terrain_ground_restitution_range": [0.0, 0.5],
-    "terrain_tile_roughness_range": [0.02, 0.08],
+    "terrain_tile_roughness_range": [0.005, 0.02],
     "robot_push_vel_range": [0.1, 0.4],
     "ball_push_vel_range": [0.1, 0.4],
     "gravity_range": [-0.1, 0.1],
@@ -191,6 +191,8 @@ def train_go1(
     Cfg.terrain.min_step_run = 0.25
     Cfg.terrain.max_step_run = 0.4
     Cfg.terrain.max_init_terrain_level = 1
+    Cfg.terrain.x_init_range = 0.05
+    Cfg.terrain.y_init_range = 0.05
 
     # terminal conditions
     Cfg.rewards.use_terminal_body_height = True

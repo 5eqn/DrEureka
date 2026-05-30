@@ -8,42 +8,42 @@ from globe_walking.go1_gym.envs.base.legged_robot_config import Cfg
 
 
 def _go2_urdf_path() -> str:
-    env_path = os.getenv("GO2_DESCRIPTION_URDF")
+    env_path = os.getenv("GO2_URDF")
     if env_path:
         return env_path
-    workspace_path = Path("/workspace/eureka-workspace/thirdparties/go2_description/urdf/go2_description.urdf")
+    workspace_path = Path("/workspace/eureka-workspace/thirdparties/unitree_rl_gym/resources/robots/go2/urdf/go2.urdf")
     if workspace_path.exists():
         return str(workspace_path)
-    root_path = Path(__file__).resolve().parents[6] / "thirdparties" / "go2_description" / "urdf" / "go2_description.urdf"
+    root_path = Path(__file__).resolve().parents[6] / "thirdparties" / "unitree_rl_gym" / "resources" / "robots" / "go2" / "urdf" / "go2.urdf"
     return str(root_path)
 
 
 def config_go2(Cnfg: Union[Cfg, Meta]):
     _ = Cnfg.init_state
+    _.pos = [0.0, 0.0, 0.42]
 
-    # Unitree MuJoCo Go2 home keyframe:
-    # qpos joints are [hip, thigh, calf] * 4 with hip=0, thigh=0.9, calf=-1.8.
+    # Unitree RL Gym GO2RoughCfg defaults.
     _.default_joint_angles = {
-        "FL_hip_joint": 0.0,
-        "FL_thigh_joint": 0.9,
-        "FL_calf_joint": -1.8,
-        "FR_hip_joint": 0.0,
-        "FR_thigh_joint": 0.9,
-        "FR_calf_joint": -1.8,
-        "RL_hip_joint": 0.0,
-        "RL_thigh_joint": 0.9,
-        "RL_calf_joint": -1.8,
-        "RR_hip_joint": 0.0,
-        "RR_thigh_joint": 0.9,
-        "RR_calf_joint": -1.8,
+        "FL_hip_joint": 0.1,
+        "FL_thigh_joint": 0.8,
+        "FL_calf_joint": -1.5,
+        "FR_hip_joint": -0.1,
+        "FR_thigh_joint": 0.8,
+        "FR_calf_joint": -1.5,
+        "RL_hip_joint": 0.1,
+        "RL_thigh_joint": 1.0,
+        "RL_calf_joint": -1.5,
+        "RR_hip_joint": -0.1,
+        "RR_thigh_joint": 1.0,
+        "RR_calf_joint": -1.5,
     }
 
     _ = Cnfg.control
     _.control_type = "P"
-    _.stiffness = {"hip": 20.0, "thigh": 20.0, "calf": 40.0}
-    _.damping = {"hip": 1.0, "thigh": 1.0, "calf": 2.0}
+    _.stiffness = {"joint": 20.0}
+    _.damping = {"joint": 0.5}
     _.action_scale = 0.25
-    _.hip_scale_reduction = 0.5
+    _.hip_scale_reduction = 1.0
     _.decimation = 4
 
     _ = Cnfg.asset
@@ -51,12 +51,13 @@ def config_go2(Cnfg: Union[Cfg, Meta]):
     _.foot_name = "foot"
     _.penalize_contacts_on = ["thigh", "calf"]
     _.terminate_after_contacts_on = ["base"]
-    _.self_collisions = 0
-    _.flip_visual_attachments = False
+    _.self_collisions = 1
+    _.flip_visual_attachments = True
     _.fix_base_link = False
 
     _ = Cnfg.rewards
     _.soft_dof_pos_limit = 0.9
+    _.base_height_target = 0.25
 
     _ = Cnfg.terrain
     _.mesh_type = "trimesh"
