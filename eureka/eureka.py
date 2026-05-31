@@ -11,6 +11,11 @@ from pathlib import Path
 import shutil
 import time 
 
+# Diagnostics: import path
+import sys
+for i, p in enumerate(sys.path):
+    print(i, p)
+
 from utils.misc import * 
 from utils.extract_task_code import *
 
