@@ -222,12 +222,15 @@ def main(cfg):
             # Execute the python file with flags
             rl_filepath = f"env_iter{iter}_response{response_id}.txt"
             with open(rl_filepath, 'w') as f:
-                command = f"{sys.executable} -u {ROOT_DIR}/{env_name}/{cfg.env.train_script} --iterations {cfg.env.train_iterations} --dr-config off --reward-config eureka"
+                command = f"{sys.executable} -u {ROOT_DIR}/{env_name}/{cfg.env.train_script} --iterations {cfg.env.train_iterations} --dr-config off --reward-config eureka --no-video"
                 command = command.split(" ")
                 if cfg.env.get("robot") is not None:
                     command += ["--robot", cfg.env.robot]
                 if not cfg.use_wandb:
                     command.append("--no-wandb")
+                print("cwd =", os.getcwd())
+                print("log =", os.path.abspath(rl_filepath))
+                print("cmd = ", command)
                 process = subprocess.Popen(command, stdout=f, stderr=f, env=training_env(env_name))
             block_until_training(rl_filepath, success_keyword=cfg.env.success_keyword, failure_keyword=cfg.env.failure_keyword,
                                  log_status=True, iter_num=iter, response_id=response_id)
