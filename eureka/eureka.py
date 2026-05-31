@@ -7,6 +7,7 @@ import os
 import openai
 import re
 import subprocess
+import hashlib
 from pathlib import Path
 import shutil
 import time 
@@ -21,6 +22,27 @@ from utils.extract_task_code import *
 
 EUREKA_ROOT_DIR = os.getcwd()
 ROOT_DIR = f"{EUREKA_ROOT_DIR}/.."
+
+def to_plain_dict(value):
+    if hasattr(value, "to_dict_recursive"):
+        return value.to_dict_recursive()
+    if isinstance(value, dict):
+        return {k: to_plain_dict(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [to_plain_dict(v) for v in value]
+    return value
+
+def llm_cache_path(env_name, iter, model, messages, cfg):
+    cache_key_payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": cfg.temperature,
+        "max_tokens": cfg.max_tokens,
+        "sample": cfg.sample,
+        "iteration": iter,
+    }
+    cache_key = hashlib.sha256(json.dumps(cache_key_payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    return Path(EUREKA_ROOT_DIR) / ".llm_cache" / f"{env_name}_iter{iter}_{cache_key}.json"
 
 @hydra.main(config_path="cfg", config_name="config", version_base="1.1")
 def main(cfg):
@@ -78,36 +100,58 @@ def main(cfg):
         total_token = 0
         total_completion_token = 0
         chunk_size = 1
+        cache_path = llm_cache_path(env_name, iter, model, messages, cfg)
 
         logging.info(f"Iteration {iter}: Generating {cfg.sample} samples with {cfg.model}")
 
-        while True:
-            if total_samples >= cfg.sample:
-                break
-            for attempt in range(3):
-                try:
-                    response_cur = openai.ChatCompletion.create(
-                        model=model,
-                        messages=messages,
-                        temperature=cfg.temperature,
-                        max_tokens=cfg.max_tokens
-                    )
-                    total_samples += chunk_size
+        if cache_path.exists():
+            with open(cache_path, "r") as file:
+                cached_response = json.load(file)
+            responses = cached_response["choices"]
+            prompt_tokens = cached_response["prompt_tokens"]
+            total_completion_token = cached_response["completion_tokens"]
+            total_token = cached_response["total_tokens"]
+            logging.info(f"Iteration {iter}: Loaded {len(responses)} cached LLM samples from {cache_path}")
+        else:
+            while True:
+                if total_samples >= cfg.sample:
                     break
-                except Exception as e:
-                    if attempt >= 10:
-                        chunk_size = max(int(chunk_size / 2), 1)
-                        print("Current Chunk Size", chunk_size)
-                    logging.info(f"Attempt {attempt+1} failed with error: {e}")
-                    time.sleep(1)
-            if response_cur is None:
-                logging.info("Code terminated due to too many failed attempts!")
-                exit()
+                response_cur = None
+                for attempt in range(3):
+                    try:
+                        response_cur = openai.ChatCompletion.create(
+                            model=model,
+                            messages=messages,
+                            temperature=cfg.temperature,
+                            max_tokens=cfg.max_tokens
+                        )
+                        total_samples += chunk_size
+                        break
+                    except Exception as e:
+                        if attempt >= 10:
+                            chunk_size = max(int(chunk_size / 2), 1)
+                            print("Current Chunk Size", chunk_size)
+                        logging.info(f"Attempt {attempt+1} failed with error: {e}")
+                        time.sleep(1)
+                if response_cur is None:
+                    logging.info("Code terminated due to too many failed attempts!")
+                    exit()
 
-            responses.extend(response_cur["choices"])
-            prompt_tokens = response_cur["usage"]["prompt_tokens"]
-            total_completion_token += response_cur["usage"]["completion_tokens"]
-            total_token += response_cur["usage"]["total_tokens"]
+                response_dict = to_plain_dict(response_cur)
+                responses.extend(response_dict["choices"])
+                prompt_tokens = response_dict["usage"]["prompt_tokens"]
+                total_completion_token += response_dict["usage"]["completion_tokens"]
+                total_token += response_dict["usage"]["total_tokens"]
+
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(cache_path, "w") as file:
+                json.dump({
+                    "choices": responses,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": total_completion_token,
+                    "total_tokens": total_token,
+                }, file, indent=2)
+            logging.info(f"Iteration {iter}: Cached {len(responses)} LLM samples to {cache_path}")
 
         if cfg.sample == 1:
             logging.info(f"Iteration {iter}: GPT Output:\n " + responses[0]["message"]["content"] + "\n")

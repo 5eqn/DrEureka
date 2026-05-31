@@ -158,5 +158,6 @@ cython_debug/
 tmp/
 wandb/
 outputs/
+.llm_cache/
 deployment_image.tar
 *.mp4
