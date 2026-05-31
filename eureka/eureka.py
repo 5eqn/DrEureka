@@ -44,6 +44,19 @@ def llm_cache_path(env_name, iter, model, messages, cfg):
     cache_key = hashlib.sha256(json.dumps(cache_key_payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
     return Path(EUREKA_ROOT_DIR) / ".llm_cache" / f"{env_name}_iter{iter}_{cache_key}.json"
 
+def training_env(env_name):
+    env = os.environ.copy()
+    repo_paths = [
+        ROOT_DIR,
+        f"{ROOT_DIR}/{env_name}",
+        f"{ROOT_DIR}/forward_locomotion",
+    ]
+    existing_pythonpath = env.get("PYTHONPATH")
+    if existing_pythonpath:
+        repo_paths.append(existing_pythonpath)
+    env["PYTHONPATH"] = os.pathsep.join(repo_paths)
+    return env
+
 @hydra.main(config_path="cfg", config_name="config", version_base="1.1")
 def main(cfg):
     workspace_dir = Path.cwd()
@@ -209,11 +222,13 @@ def main(cfg):
             # Execute the python file with flags
             rl_filepath = f"env_iter{iter}_response{response_id}.txt"
             with open(rl_filepath, 'w') as f:
-                command = f"python -u {ROOT_DIR}/{env_name}/{cfg.env.train_script} --iterations {cfg.env.train_iterations} --dr-config off --reward-config eureka"
+                command = f"{sys.executable} -u {ROOT_DIR}/{env_name}/{cfg.env.train_script} --iterations {cfg.env.train_iterations} --dr-config off --reward-config eureka"
                 command = command.split(" ")
+                if cfg.env.get("robot") is not None:
+                    command += ["--robot", cfg.env.robot]
                 if not cfg.use_wandb:
                     command.append("--no-wandb")
-                process = subprocess.Popen(command, stdout=f, stderr=f)
+                process = subprocess.Popen(command, stdout=f, stderr=f, env=training_env(env_name))
             block_until_training(rl_filepath, success_keyword=cfg.env.success_keyword, failure_keyword=cfg.env.failure_keyword,
                                  log_status=True, iter_num=iter, response_id=response_id)
             rl_runs.append(process)
