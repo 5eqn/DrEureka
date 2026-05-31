@@ -26,7 +26,8 @@ def main(cfg):
     logging.info(f"Workspace: {workspace_dir}")
     logging.info(f"Project Root: {EUREKA_ROOT_DIR}")
 
-    openai.api_key = os.getenv("OPENAI_API_KEY")
+    openai.api_key = os.getenv("OPENAI_API_KEY", cfg.api_key)
+    openai.api_base = os.getenv("OPENAI_API_BASE", cfg.api_base)
 
     task = cfg.env.task
     task_description = cfg.env.description
@@ -75,6 +76,7 @@ def main(cfg):
                     model=model,
                     messages=messages,
                     temperature=cfg.temperature,
+                    max_tokens=cfg.max_tokens,
                     n=chunk_size
                 )
                 total_samples += chunk_size

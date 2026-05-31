@@ -6,7 +6,7 @@ train_script: scripts/train.py
 dr_template_file: go1_gym/envs/base/legged_robot_config_template.py
 dr_output_file: go1_gym/envs/base/legged_robot_config.py
 
-train_iterations: 1000
+train_iterations: 5000
 success_keyword: running
 failure_keyword: Traceback
 
