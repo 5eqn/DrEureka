@@ -277,6 +277,7 @@ class LeggedRobot(BaseTask):
                     elif torch.sum(rew) <= 0:
                         self.rew_buf_neg += rew
                 self.episode_sums[name] += rew
+            self.episode_sums["success"] += self.reward_container.compute_success()
         else:
             rew, rew_components = self.reward_container.compute_reward()
             self.rew_buf += rew
@@ -1346,6 +1347,8 @@ class LeggedRobot(BaseTask):
                 if not name.startswith("_reward_"):
                     continue
                 name = name.replace("_reward_", "")
+                if name == "success":
+                    continue
                 self.reward_names.append(name)
                 self.reward_functions.append(getattr(self.reward_container, '_reward_' + name))
 

@@ -103,6 +103,8 @@ def main(cfg):
     max_success_overall = DUMMY_FAILURE
     max_success_reward_correlation_overall = DUMMY_FAILURE
     max_reward_code_path = None 
+    max_concurrent_training = get_max_concurrent_training()
+    logging.info(f"Max concurrent training jobs: {max_concurrent_training}")
     
     # Eureka generation loop
     for iter in range(cfg.iteration):
@@ -233,8 +235,10 @@ def main(cfg):
                 print("cmd = ", command)
                 process = subprocess.Popen(command, stdout=f, stderr=f, env=training_env(env_name))
             block_until_training(rl_filepath, success_keyword=cfg.env.success_keyword, failure_keyword=cfg.env.failure_keyword,
-                                 log_status=True, iter_num=iter, response_id=response_id)
+                                 log_status=True, iter_num=iter, response_id=response_id, process=process)
             rl_runs.append(process)
+            while sum(rl_run.poll() is None for rl_run in rl_runs) >= max_concurrent_training:
+                time.sleep(10)
 
         # Gather RL training results and construct reward reflection
         code_feedbacks = []

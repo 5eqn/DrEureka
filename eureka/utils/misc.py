@@ -2,12 +2,37 @@ import subprocess
 import os
 import json
 import logging
+import time
 
 from utils.extract_task_code import file_to_string
 
 def set_freest_gpu():
     freest_gpu = get_freest_gpu()
     os.environ['CUDA_VISIBLE_DEVICES'] = str(freest_gpu)
+
+def get_gpu_count():
+    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible_devices:
+        devices = [device.strip() for device in visible_devices.split(",")]
+        return max(len([device for device in devices if device and device != "-1"]), 1)
+
+    sp = subprocess.Popen(['gpustat', '--json'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    out_str, _ = sp.communicate()
+    gpustats = json.loads(out_str.decode('utf-8'))
+    return max(len(gpustats['gpus']), 1)
+
+def get_max_concurrent_training(env_var="EUREKA_MAX_CONCURRENT_TRAINING"):
+    value = os.environ.get(env_var)
+    if value is None:
+        return get_gpu_count()
+
+    try:
+        max_concurrent_training = int(value)
+    except ValueError as exc:
+        raise ValueError(f"{env_var} must be a positive integer, got {value!r}") from exc
+    if max_concurrent_training < 1:
+        raise ValueError(f"{env_var} must be a positive integer, got {value!r}")
+    return max_concurrent_training
 
 def get_freest_gpu():
     # Note: if this line breaks, you can provide an absolute path to gpustat instead
@@ -29,16 +54,25 @@ def filter_traceback(s):
             return '\n'.join(filtered_lines)
     return ''  # Return an empty string if no Traceback is found
 
-def block_until_training(rl_filepath, success_keyword, failure_keyword, log_status=False, iter_num=-1, response_id=-1):
+def block_until_training(rl_filepath, success_keyword, failure_keyword, log_status=False, iter_num=-1, response_id=-1, process=None):
     # Ensure that the RL training has started before moving on
+    success_markers = [marker for marker in (success_keyword, "running") if marker]
+    failure_markers = [marker for marker in (failure_keyword, "Traceback") if marker]
     while True:
         rl_log = file_to_string(rl_filepath)
-        if "running" in rl_log or "Traceback" in rl_log:
-            if log_status and "running" in rl_log:
+        if any(marker in rl_log for marker in success_markers):
+            if log_status:
                 logging.info(f"Iteration {iter_num}: Code Run {response_id} successfully training!")
-            if log_status and "Traceback" in rl_log:
+            return True
+        if any(marker in rl_log for marker in failure_markers):
+            if log_status:
                 logging.info(f"Iteration {iter_num}: Code Run {response_id} execution error!")
-            break
+            return False
+        if process is not None and process.poll() is not None:
+            if log_status:
+                logging.info(f"Iteration {iter_num}: Code Run {response_id} exited before training with code {process.returncode}!")
+            return False
+        time.sleep(1)
 
 def construct_run_log(stdout_str):
     run_log = {}
@@ -59,7 +93,7 @@ def construct_run_log(stdout_str):
             run_log[key] = run_log.get(key, []) + [float(val)]
     run_log["gpt_reward"] = []
     run_log["gt_reward"] = []
-    for i in range(len(run_log["consecutive_successes"])):
+    for i in range(len(run_log.get("consecutive_successes", []))):
         cur_sum = 0
         for key in run_log:
             if "rew " in key:
