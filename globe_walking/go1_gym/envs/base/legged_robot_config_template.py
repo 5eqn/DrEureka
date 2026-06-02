@@ -350,7 +350,7 @@ class Cfg(PrefixProto, cli=False):
         robot_Kp_factor_range = [1.0, 1.0]
         robot_Kd_factor_range = [1.0, 1.0]
 
-        ball_radius_range = [0.35, 0.45]  # Measured in real
+        ball_radius_range = [0.45, 0.55]  # Measured in real
         ball_mass_range = [1.0, 1.0]
         ball_friction_range = [1.0, 1.0]
         ball_restitution_range = [0.0, 0.0]
@@ -388,7 +388,7 @@ class Cfg(PrefixProto, cli=False):
         robot_Kp_factor_range = [1.0, 1.0]
         robot_Kd_factor_range = [1.0, 1.0]
 
-        ball_radius_range = [0.45, 0.45]
+        ball_radius_range = [0.55, 0.55]
         ball_mass_range = [1.0, 1.0]
         ball_friction_range = [1.0, 1.0]
         ball_restitution_range = [0.0, 0.0]
