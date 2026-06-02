@@ -11,6 +11,7 @@ import hashlib
 from pathlib import Path
 import shutil
 import time 
+import textwrap
 
 # Diagnostics: import path
 import sys
@@ -56,6 +57,26 @@ def training_env(env_name):
         repo_paths.append(existing_pythonpath)
     env["PYTHONPATH"] = os.pathsep.join(repo_paths)
     return env
+
+class ReusedTrainingRun:
+    def communicate(self):
+        return None, None
+
+def reusable_training_output(rl_filepath):
+    if not os.path.exists(rl_filepath):
+        return False
+    stdout_str = file_to_string(rl_filepath)
+    return stdout_str.strip() != ""
+
+def existing_code_responses(iter, sample):
+    response_paths = [f"env_iter{iter}_response{response_id}_rewardonly.py" for response_id in range(sample)]
+    if not all(os.path.exists(path) for path in response_paths):
+        return None
+    responses = []
+    for path in response_paths:
+        code_string = textwrap.dedent(file_to_string(path)).strip()
+        responses.append({"message": {"content": f"```python\n{code_string}\n```"}})
+    return responses
 
 @hydra.main(config_path="cfg", config_name="config", version_base="1.1")
 def main(cfg):
@@ -105,9 +126,26 @@ def main(cfg):
     max_reward_code_path = None 
     max_concurrent_training = get_max_concurrent_training()
     logging.info(f"Max concurrent training jobs: {max_concurrent_training}")
+
+    start_iter = 0
+    if os.path.exists("summary.npz") and os.path.exists("messages.json"):
+        summary = np.load("summary.npz", allow_pickle=True)
+        max_successes = list(summary["max_successes"])
+        execute_rates = list(summary["execute_rates"])
+        best_code_paths = list(summary["best_code_paths"])
+        max_successes_reward_correlation = list(summary["max_successes_reward_correlation"])
+        with open("messages.json", "r") as file:
+            messages = json.load(file)
+        start_iter = len(max_successes)
+        if max_successes:
+            best_resume_idx = int(np.argmax(np.array(max_successes)))
+            max_success_overall = max_successes[best_resume_idx]
+            max_success_reward_correlation_overall = max_successes_reward_correlation[best_resume_idx]
+            max_reward_code_path = best_code_paths[best_resume_idx]
+        logging.info(f"Resuming from existing Eureka output at iteration {start_iter}.")
     
     # Eureka generation loop
-    for iter in range(cfg.iteration):
+    for iter in range(start_iter, cfg.iteration):
         # Get Eureka response
         responses = []
         response_cur = None
@@ -119,7 +157,14 @@ def main(cfg):
 
         logging.info(f"Iteration {iter}: Generating {cfg.sample} samples with {cfg.model}")
 
-        if cache_path.exists():
+        existing_responses = existing_code_responses(iter, cfg.sample)
+        if existing_responses is not None:
+            responses = existing_responses
+            prompt_tokens = 0
+            total_completion_token = 0
+            total_token = 0
+            logging.info(f"Iteration {iter}: Loaded {len(responses)} generated samples from existing output files.")
+        elif cache_path.exists():
             with open(cache_path, "r") as file:
                 cached_response = json.load(file)
             responses = cached_response["choices"]
@@ -177,31 +222,36 @@ def main(cfg):
         code_runs = [] 
         rl_runs = []
         for response_id in range(cfg.sample):
-            response_cur = responses[response_id]["message"]["content"]
             logging.info(f"Iteration {iter}: Processing Code Run {response_id}")
 
-            # Regex patterns to extract python code enclosed in GPT response
-            patterns = [
-                r'```python(.*?)```',
-                r'```(.*?)```',
-                r'"""(.*?)"""',
-                r'""(.*?)""',
-                r'"(.*?)"',
-            ]
-            for pattern in patterns:
-                code_string = re.search(pattern, response_cur, re.DOTALL)
-                if code_string is not None:
-                    code_string = code_string.group(1).strip()
-                    break
-            code_string = response_cur if not code_string else code_string
+            rewardonly_path = f"env_iter{iter}_response{response_id}_rewardonly.py"
+            if os.path.exists(rewardonly_path):
+                code_string = file_to_string(rewardonly_path).rstrip()
+            else:
+                response_cur = responses[response_id]["message"]["content"]
 
-            # Remove unnecessary imports
-            lines = code_string.split("\n")
-            lines = [" "*4 + line for line in lines]
-            for i, line in enumerate(lines):
-                if line.strip().startswith("def "):
-                    code_string = "\n".join(lines[i:])
-                    break
+                # Regex patterns to extract python code enclosed in GPT response
+                patterns = [
+                    r'```python(.*?)```',
+                    r'```(.*?)```',
+                    r'"""(.*?)"""',
+                    r'""(.*?)""',
+                    r'"(.*?)"',
+                ]
+                for pattern in patterns:
+                    code_string = re.search(pattern, response_cur, re.DOTALL)
+                    if code_string is not None:
+                        code_string = code_string.group(1).strip()
+                        break
+                code_string = response_cur if not code_string else code_string
+
+                # Remove unnecessary imports
+                lines = code_string.split("\n")
+                lines = [" "*4 + line for line in lines]
+                for i, line in enumerate(lines):
+                    if line.strip().startswith("def "):
+                        code_string = "\n".join(lines[i:])
+                        break
             
             code_runs.append(code_string)
                     
@@ -212,7 +262,7 @@ def main(cfg):
             with open(output_file, 'w') as file:
                 file.writelines(cur_task_rew_code_string + '\n')
 
-            with open(f"env_iter{iter}_response{response_id}_rewardonly.py", 'w') as file:
+            with open(rewardonly_path, 'w') as file:
                 file.writelines(code_string + '\n')
 
             # Copy the generated environment code to hydra output directory for bookkeeping
@@ -223,6 +273,11 @@ def main(cfg):
             
             # Execute the python file with flags
             rl_filepath = f"env_iter{iter}_response{response_id}.txt"
+            if reusable_training_output(rl_filepath):
+                logging.info(f"Iteration {iter}: Code Run {response_id} reusing existing training output.")
+                rl_runs.append(ReusedTrainingRun())
+                continue
+
             with open(rl_filepath, 'w') as f:
                 command = f"{sys.executable} -u {ROOT_DIR}/{env_name}/{cfg.env.train_script} --iterations {cfg.env.train_iterations} --dr-config off --reward-config eureka --no-video"
                 command = command.split(" ")
@@ -268,8 +323,16 @@ def main(cfg):
 
             if traceback_msg == '':
                 # If RL execution has no error, provide policy statistics feedback
-                exec_success = True
                 run_log = construct_run_log(stdout_str)
+                if "iterations/" not in run_log:
+                    successes.append(DUMMY_FAILURE)
+                    reward_correlations.append(DUMMY_FAILURE)
+                    content += execution_error_feedback.format(traceback_msg="Code Run exited without training metrics. The reward format may be invalid or training may have stopped before logging iterations.")
+                    content += code_output_tip
+                    contents.append(content)
+                    continue
+
+                exec_success = True
                 
                 train_iterations = np.array(run_log['iterations/']).shape[0]
                 epoch_freq = max(int(train_iterations // 10), 1)
