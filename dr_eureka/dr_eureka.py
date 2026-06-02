@@ -12,6 +12,8 @@ import shutil
 from matplotlib import pyplot as plt
 import pickle as pkl
 import json
+import hashlib
+import textwrap
 
 from utils.misc import * 
 from utils.create_task import create_task
@@ -19,6 +21,49 @@ from utils.extract_task_code import *
 
 EUREKA_ROOT_DIR = os.getcwd()
 ROOT_DIR = f"{EUREKA_ROOT_DIR}/.."
+
+def to_plain_dict(value):
+    if hasattr(value, "to_dict_recursive"):
+        return value.to_dict_recursive()
+    if isinstance(value, dict):
+        return {k: to_plain_dict(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [to_plain_dict(v) for v in value]
+    return value
+
+def llm_cache_path(env_name, model, messages, cfg):
+    cache_key_payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": cfg.temperature,
+        "max_tokens": cfg.max_tokens,
+        "sample": cfg.sample,
+    }
+    cache_key = hashlib.sha256(json.dumps(cache_key_payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    return Path(EUREKA_ROOT_DIR) / ".llm_cache" / f"{env_name}_dr_{cache_key}.json"
+
+class ReusedTrainingRun:
+    def poll(self):
+        return 0
+
+    def communicate(self):
+        return None, None
+
+def reusable_training_output(rl_filepath):
+    if not os.path.exists(rl_filepath):
+        return False
+    stdout_str = file_to_string(rl_filepath)
+    return stdout_str.strip() != ""
+
+def existing_code_responses(sample):
+    response_paths = [f"config_response{response_id}_dr_only.py" for response_id in range(sample)]
+    if not all(os.path.exists(path) for path in response_paths):
+        return None
+    responses = []
+    for path in response_paths:
+        code_string = textwrap.dedent(file_to_string(path)).strip()
+        responses.append({"message": {"content": f"```python\n{code_string}\n```"}})
+    return responses
 
 @hydra.main(config_path="cfg", config_name="config", version_base="1.1")
 def main(cfg):
@@ -56,6 +101,8 @@ def main(cfg):
     max_success_overall = DUMMY_FAILURE
     max_success_reward_correlation_overall = DUMMY_FAILURE
     max_reward_code_path = None 
+    max_concurrent_training = get_max_concurrent_training()
+    logging.info(f"Max concurrent training jobs: {max_concurrent_training}")
     
     # Get Eureka response
     responses = []
@@ -63,38 +110,63 @@ def main(cfg):
     total_samples = 0
     total_token = 0
     total_completion_token = 0
-    chunk_size = cfg.sample if "gpt-3.5" in model else 4
+    chunk_size = 1
+    cache_path = llm_cache_path(env_name, model, messages, cfg)
 
     logging.info(f"Generating {cfg.sample} samples with {cfg.model}")
 
-    while True:
-        if total_samples >= cfg.sample:
-            break
-        for attempt in range(3):
-            try:
-                response_cur = openai.ChatCompletion.create(
-                    model=model,
-                    messages=messages,
-                    temperature=cfg.temperature,
-                    max_tokens=cfg.max_tokens,
-                    n=chunk_size
-                )
-                total_samples += chunk_size
+    existing_responses = existing_code_responses(cfg.sample)
+    if existing_responses is not None:
+        responses = existing_responses
+        prompt_tokens = 0
+        total_completion_token = 0
+        total_token = 0
+        logging.info(f"Loaded {len(responses)} generated samples from existing output files.")
+    elif cache_path.exists():
+        with open(cache_path, "r") as file:
+            cached_response = json.load(file)
+        responses = cached_response["choices"]
+        prompt_tokens = cached_response["prompt_tokens"]
+        total_completion_token = cached_response["completion_tokens"]
+        total_token = cached_response["total_tokens"]
+        logging.info(f"Loaded {len(responses)} cached LLM samples from {cache_path}")
+    else:
+        while True:
+            if total_samples >= cfg.sample:
                 break
-            except Exception as e:
-                if attempt >= 10:
-                    chunk_size = max(int(chunk_size / 2), 1)
-                    print("Current Chunk Size", chunk_size)
-                logging.info(f"Attempt {attempt+1} failed with error: {e}")
-                time.sleep(1)
-        if response_cur is None:
-            logging.info("Code terminated due to too many failed attempts!")
-            exit()
+            response_cur = None
+            for attempt in range(3):
+                try:
+                    response_cur = openai.ChatCompletion.create(
+                        model=model,
+                        messages=messages,
+                        temperature=cfg.temperature,
+                        max_tokens=cfg.max_tokens
+                    )
+                    total_samples += chunk_size
+                    break
+                except Exception as e:
+                    logging.info(f"Attempt {attempt+1} failed with error: {e}")
+                    time.sleep(1)
+            if response_cur is None:
+                logging.info("Code terminated due to too many failed attempts!")
+                exit()
 
-        responses.extend(response_cur["choices"])
-        prompt_tokens = response_cur["usage"]["prompt_tokens"]
-        total_completion_token += response_cur["usage"]["completion_tokens"]
-        total_token += response_cur["usage"]["total_tokens"]
+            response_dict = to_plain_dict(response_cur)
+            responses.extend(response_dict["choices"])
+            prompt_tokens = response_dict["usage"]["prompt_tokens"]
+            total_completion_token += response_dict["usage"]["completion_tokens"]
+            total_token += response_dict["usage"]["total_tokens"]
+
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(cache_path, "w") as file:
+            json.dump({
+                "choices": responses,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": total_completion_token,
+                "total_tokens": total_token,
+            }, file, indent=2)
+        logging.info(f"Cached {len(responses)} LLM samples to {cache_path}")
 
     if cfg.sample == 1:
         logging.info(f"GPT Output:\n " + responses[0]["message"]["content"] + "\n")
@@ -105,24 +177,29 @@ def main(cfg):
     code_runs = [] 
     rl_runs = []
     for response_id in range(cfg.sample):
-        response_cur = responses[response_id]["message"]["content"]
         logging.info(f"Processing Code Run {response_id}")
 
-        # Regex patterns to extract python code enclosed in GPT response
-        patterns = [
-            r'```python(.*?)```',
-            r'```(.*?)```',
-            r'"""(.*?)"""',
-            r'""(.*?)""',
-            r'"(.*?)"',
-        ]
-        for pattern in patterns:
-            code_string = re.search(pattern, response_cur, re.DOTALL)
-            if code_string is not None:
-                code_string = code_string.group(1).strip()
-                break
-        code_string = response_cur if not code_string else code_string
-        code_string = "\n".join([" "*8 + line for line in code_string.split('\n')])
+        dr_only_path = f"config_response{response_id}_dr_only.py"
+        if os.path.exists(dr_only_path):
+            code_string = file_to_string(dr_only_path).rstrip()
+        else:
+            response_cur = responses[response_id]["message"]["content"]
+
+            # Regex patterns to extract python code enclosed in GPT response
+            patterns = [
+                r'```python(.*?)```',
+                r'```(.*?)```',
+                r'"""(.*?)"""',
+                r'""(.*?)""',
+                r'"(.*?)"',
+            ]
+            for pattern in patterns:
+                code_string = re.search(pattern, response_cur, re.DOTALL)
+                if code_string is not None:
+                    code_string = code_string.group(1).strip()
+                    break
+            code_string = response_cur if not code_string else code_string
+            code_string = "\n".join([" "*8 + line for line in code_string.split('\n')])
 
         code_runs.append(code_string)
                 
@@ -133,7 +210,7 @@ def main(cfg):
         with open(output_file, 'w') as file:
             file.writelines(cur_task_rew_code_string + '\n')
 
-        with open(f"config_response{response_id}_dr_only.py", 'w') as file:
+        with open(dr_only_path, 'w') as file:
             file.writelines(code_string + '\n')
 
         # Copy the generated environment code to hydra output directory for bookkeeping
@@ -144,6 +221,11 @@ def main(cfg):
         
         # Execute the python file with flags
         rl_filepath = f"config_response{response_id}.txt"
+        if reusable_training_output(rl_filepath):
+            logging.info(f"Code Run {response_id} reusing existing training output.")
+            rl_runs.append(ReusedTrainingRun())
+            continue
+
         with open(rl_filepath, 'w') as f:
             command = f"python -u {ROOT_DIR}/{env_name}/{cfg.env.train_script} --iterations {cfg.env.train_iterations} --dr-config eureka --reward-config eureka"
             command = command.split(" ")
@@ -151,8 +233,10 @@ def main(cfg):
                 command.append("--no-wandb")
             process = subprocess.Popen(command, stdout=f, stderr=f)
         block_until_training(rl_filepath, success_keyword=cfg.env.success_keyword, failure_keyword=cfg.env.failure_keyword,
-                                log_status=True, iter_num=None, response_id=response_id)
+                                log_status=True, iter_num=None, response_id=response_id, process=process)
         rl_runs.append(process)
+        while sum(rl_run.poll() is None for rl_run in rl_runs) >= max_concurrent_training:
+            time.sleep(10)
 
     # Gather RL training results and construct reward reflection
     contents = []
@@ -180,8 +264,15 @@ def main(cfg):
 
         if traceback_msg == '':
             # If RL execution has no error, provide policy statistics feedback
-            exec_success = True
             run_log = construct_run_log(stdout_str)
+            if "running" not in stdout_str or "iterations/" not in run_log:
+                content += "Code Run exited without training metrics. The domain randomization may be invalid or training may have stopped before logging iterations.\n"
+                contents.append(content)
+                successes.append(DUMMY_FAILURE)
+                reward_correlations.append(DUMMY_FAILURE)
+                continue
+
+            exec_success = True
             
             train_iterations = np.array(run_log['iterations/']).shape[0]
             epoch_freq = max(int(train_iterations // 10), 1)
