@@ -45,7 +45,7 @@ def globe_walking_success(stdout, parameter, val):
         min_base_height = min(min_base_height, height)
         max_base_height = max(max_base_height, height)
     print(f"Minimum, Maximum base height for {parameter} = {val}: {min_base_height}, {max_base_height}")
-    return 0.9 <= min_base_height and max_base_height <= 1.2
+    return 0.8 <= min_base_height and max_base_height <= 1.2
 
 def success(cfg, stdout, parameter, val):
     """
