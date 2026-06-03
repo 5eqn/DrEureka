@@ -375,7 +375,32 @@ class Cfg(PrefixProto, cli=False):
         lag_timesteps_range = [6, 6]
         lag_timesteps_rand_interval_s = 10
 
-# INSERT EUREKA DR HERE
+        # Domain randomization parameters for quadruped balancing on a yoga ball
+        # The real yoga ball is hollow, bouncy, and deformable, unlike the rigid simulation ball.
+        # To bridge the gap, we randomize ball properties (especially restitution) to cover a wide
+        # range of effective contact dynamics, including low restitution that mimics energy absorption
+        # during deformation. Robot properties and ground interactions are also randomized for robustness.
+        
+        robot_friction_range = [0.5, 2.0]          # Foot friction varies to handle both slippery and grippy conditions
+        robot_restitution_range = [0.0, 0.3]       # Robot feet have little bounce; low restitution avoids unrealistic energy return
+        robot_payload_mass_range = [-1.0, 1.0]     # Moderate payload variation (kg) to simulate different loads
+        robot_com_displacement_range = [-0.01, 0.01]   # Small center-of-mass offsets (m) for asymmetry
+        robot_motor_strength_range = [0.8, 1.2]    # Motor torque scaling includes weaker motors (e.g., low battery)
+        robot_motor_offset_range = [-0.05, 0.05]   # Joint position calibration errors (rad)
+        
+        ball_mass_range = [0.8, 1.2]              # Ball mass variation to mimic changes in effective inertia from deformation
+        ball_friction_range = [0.5, 1.5]          # Ball surface friction variation (smooth to tacky) due to material/dirt
+        ball_restitution_range = [0.1, 0.9]       # Wide range: low to simulate deformation energy loss, high to test bounciness
+        ball_drag_range = [0.0, 0.0]              # Air drag neglected (negligible for this scale)
+        
+        terrain_ground_friction_range = [0.3, 3.0]         # Ground friction (slippery to high grip) affects ball rolling
+        terrain_ground_restitution_range = [0.0, 0.5]      # Ground bounciness; real floors are mostly not bouncy
+        terrain_tile_roughness_range = [0.0, 0.1]          # Roughness minimal; ball stays on flat surfaces
+        
+        robot_push_vel_range = [0.0, 0.3]         # Random external pushes on robot for disturbance rejection (m/s)
+        ball_push_vel_range = [0.0, 0.3]          # Random external pushes on ball (m/s)
+        
+        gravity_range = [0.98, 1.02]              # Small gravity variations to account for model errors (multiplier)
     
     class domain_rand_off(PrefixProto, cli=False):
         randomize = True
@@ -624,3 +649,4 @@ def set_seed(seed, torch_deterministic=False, rank=0):
 
 rank = int(os.getenv("LOCAL_RANK", "0"))
 set_seed(0 + rank, torch_deterministic=False)
+
