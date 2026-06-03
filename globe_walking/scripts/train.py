@@ -78,6 +78,11 @@ def train_go1(
     domain_rand_profile="repo",
     physx_profile=None,
     resume_checkpoint="ac_weights_last.pt",
+    early_stop=True,
+    early_stop_warmup_iterations=1000,
+    early_stop_patience_iterations=800,
+    early_stop_min_delta=0.01,
+    early_stop_ema_alpha=0.1,
 ):
 
     import isaacgym
@@ -210,6 +215,13 @@ def train_go1(
         RunnerArgs.save_interval = int(save_interval)
     if num_steps_per_env is not None:
         RunnerArgs.num_steps_per_env = int(num_steps_per_env)
+    RunnerArgs.early_stop_enabled = bool(early_stop)
+    RunnerArgs.early_stop_warmup_iterations = int(early_stop_warmup_iterations)
+    RunnerArgs.early_stop_patience_iterations = int(early_stop_patience_iterations)
+    RunnerArgs.early_stop_min_delta = float(early_stop_min_delta)
+    RunnerArgs.early_stop_ema_alpha = float(early_stop_ema_alpha)
+    if not 0.0 < RunnerArgs.early_stop_ema_alpha <= 1.0:
+        raise ValueError("--early-stop-ema-alpha must be in (0, 1]")
 
     import wandb
     if (Cfg.multi_gpu and int(os.getenv("LOCAL_RANK", "0")) == 0) or not Cfg.multi_gpu:
@@ -293,6 +305,13 @@ if __name__ == '__main__':
     parser.add_argument("--resume-run", type=str, default=None)
     parser.add_argument("--resume-checkpoint", type=str, default="ac_weights_last.pt")
     parser.add_argument("--robot", type=str, default="go1", choices=["go1", "go2"])
+    parser.set_defaults(early_stop=True)
+    parser.add_argument("--early-stop", dest="early_stop", action="store_true")
+    parser.add_argument("--no-early-stop", dest="early_stop", action="store_false")
+    parser.add_argument("--early-stop-warmup-iterations", type=int, default=1000)
+    parser.add_argument("--early-stop-patience-iterations", type=int, default=800)
+    parser.add_argument("--early-stop-min-delta", type=float, default=0.01)
+    parser.add_argument("--early-stop-ema-alpha", type=float, default=0.1)
 
     parser.add_argument("--dr-config", type=str, required=True, choices=["eureka", "off"])
     parser.add_argument("--reward-config", type=str, required=True, choices=["eureka"])
@@ -317,4 +336,9 @@ if __name__ == '__main__':
         domain_rand_profile=args.domain_rand_profile,
         physx_profile=args.physx_profile,
         resume_checkpoint=args.resume_checkpoint,
+        early_stop=args.early_stop,
+        early_stop_warmup_iterations=args.early_stop_warmup_iterations,
+        early_stop_patience_iterations=args.early_stop_patience_iterations,
+        early_stop_min_delta=args.early_stop_min_delta,
+        early_stop_ema_alpha=args.early_stop_ema_alpha,
     )

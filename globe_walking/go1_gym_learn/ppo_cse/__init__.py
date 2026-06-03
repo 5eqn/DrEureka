@@ -55,6 +55,15 @@ class RunnerArgs(PrefixProto, cli=False):
     save_video_interval = 100
     log_freq = 10
 
+    # early stopping
+    early_stop_enabled = False
+    early_stop_metric = "rew_total"
+    early_stop_warmup_iterations = 1000
+    early_stop_patience_iterations = 800
+    early_stop_min_delta = 0.01
+    early_stop_ema_alpha = 0.1
+    early_stop_restore_best = True
+
     # load and resume
     resume = False
     load_run = -1  # -1 = last run
@@ -113,6 +122,65 @@ class Runner:
 
         self.env.reset()
 
+    @staticmethod
+    def _metric_to_float(value):
+        if isinstance(value, torch.Tensor):
+            return float(value.detach().mean().cpu().item())
+        return float(value)
+
+    @staticmethod
+    def _state_dict_cpu_copy(state_dict):
+        return {key: value.detach().cpu().clone() for key, value in state_dict.items()}
+
+    def _save_checkpoint(self, it):
+        with logger.Sync():
+            print(f"Saving model at iteration {it}")
+
+            logger.torch_save(self.alg.actor_critic.state_dict(), f"checkpoints/ac_weights_{it:06d}.pt")
+            logger.duplicate(f"checkpoints/ac_weights_{it:06d}.pt", f"checkpoints/ac_weights_last.pt")
+
+            path = './tmp/legged_data'
+            os.makedirs(path, exist_ok=True)
+
+            ac_weight_path = f'{path}/ac_weights_{it}.pt'
+            torch.save(self.alg.actor_critic.state_dict(), ac_weight_path)
+            wandb.save(ac_weight_path)
+
+            ac_weight_path = f'{path}/ac_weights_latest.pt'
+            torch.save(self.alg.actor_critic.state_dict(), ac_weight_path)
+            wandb.save(ac_weight_path)
+
+            adaptation_module_path = f'{path}/adaptation_module_{it}.jit'
+            adaptation_module = copy.deepcopy(self.alg.actor_critic.adaptation_module).to('cpu')
+            traced_script_adaptation_module = torch.jit.script(adaptation_module)
+            traced_script_adaptation_module.save(adaptation_module_path)
+
+            adaptation_module_path = f'{path}/adaptation_module_latest.jit'
+            traced_script_adaptation_module.save(adaptation_module_path)
+
+            body_path = f'{path}/body_{it}.jit'
+            body_model = copy.deepcopy(self.alg.actor_critic.actor_body).to('cpu')
+            traced_script_body_module = torch.jit.script(body_model)
+            traced_script_body_module.save(body_path)
+
+            body_path = f'{path}/body_latest.jit'
+            traced_script_body_module.save(body_path)
+
+            logger.upload_file(file_path=adaptation_module_path, target_path=f"checkpoints/", once=False)
+            logger.upload_file(file_path=body_path, target_path=f"checkpoints/", once=False)
+
+        ac_weights_path = f"{path}/ac_weights_{it}.pt"
+        torch.save(self.alg.actor_critic.state_dict(), ac_weights_path)
+        ac_weights_path = f"{path}/ac_weights_latest.pt"
+        torch.save(self.alg.actor_critic.state_dict(), ac_weights_path)
+
+        wandb.save(f"./tmp/legged_data/adaptation_module_{it}.jit")
+        wandb.save(f"./tmp/legged_data/body_{it}.jit")
+        wandb.save(f"./tmp/legged_data/ac_weights_{it}.pt")
+        wandb.save(f"./tmp/legged_data/adaptation_module_latest.jit")
+        wandb.save(f"./tmp/legged_data/body_latest.jit")
+        wandb.save(f"./tmp/legged_data/ac_weights_latest.pt")
+
     def learn(self, num_learning_iterations, init_at_random_ep_len=False, eval_freq=100, curriculum_dump_freq=500, eval_expert=False):
         logger.start('start', 'epoch', 'episode', 'run', 'step')
 
@@ -145,8 +213,14 @@ class Runner:
         cur_episode_length = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
 
         tot_iter = self.current_learning_iteration + num_learning_iterations
+        early_stop_ema = None
+        early_stop_best = None
+        early_stop_best_it = None
+        early_stop_best_state = None
+        early_stop_missing_logged = False
         for it in range(self.current_learning_iteration, tot_iter):
             start = time.time()
+            latest_episode_metrics = None
             # Rollout
             with torch.inference_mode():
                 for i in range(self.num_steps_per_env):
@@ -163,6 +237,7 @@ class Runner:
                     self.alg.process_env_step(rewards[:num_train_envs], dones[:num_train_envs], infos)
 
                     if 'train/episode' in infos and self.rank == 0:
+                        latest_episode_metrics = infos['train/episode']
                         wandb.log(infos['train/episode'], step=it)
                         with logger.Prefix(metrics="train/episode"):
                             logger.store_metrics(**infos['train/episode'])
@@ -191,6 +266,7 @@ class Runner:
 
             self.tot_timesteps += self.num_steps_per_env * self.env.num_envs
 
+            early_stop_now = False
             if self.rank == 0:
                 logger.store_metrics(
                     time_elapsed=logger.since('start'),
@@ -232,56 +308,59 @@ class Runner:
                 # trigger_sync()
 
                 if it % RunnerArgs.save_interval == 0 or it == tot_iter - 1:
-                    with logger.Sync():
-                        print(f"Saving model at iteration {it}")
+                    self._save_checkpoint(it)
 
-                        logger.torch_save(self.alg.actor_critic.state_dict(), f"checkpoints/ac_weights_{it:06d}.pt")
-                        logger.duplicate(f"checkpoints/ac_weights_{it:06d}.pt", f"checkpoints/ac_weights_last.pt")
+                if RunnerArgs.early_stop_enabled:
+                    metric_name = RunnerArgs.early_stop_metric
+                    if latest_episode_metrics is None or metric_name not in latest_episode_metrics:
+                        if not early_stop_missing_logged:
+                            print(f"Early stopping is waiting for train/episode metric '{metric_name}'.")
+                            early_stop_missing_logged = True
+                    else:
+                        metric_value = self._metric_to_float(latest_episode_metrics[metric_name])
+                        if early_stop_ema is None:
+                            early_stop_ema = metric_value
+                        else:
+                            alpha = float(RunnerArgs.early_stop_ema_alpha)
+                            early_stop_ema = alpha * metric_value + (1.0 - alpha) * early_stop_ema
 
-                        path = './tmp/legged_data'
-                        os.makedirs(path, exist_ok=True)
+                        improved = (
+                            early_stop_best is None
+                            or early_stop_ema > early_stop_best + float(RunnerArgs.early_stop_min_delta)
+                        )
+                        if improved:
+                            early_stop_best = early_stop_ema
+                            early_stop_best_it = it
+                            if RunnerArgs.early_stop_restore_best:
+                                early_stop_best_state = self._state_dict_cpu_copy(self.alg.actor_critic.state_dict())
 
-                        ac_weight_path = f'{path}/ac_weights_{it}.pt'
-                        torch.save(self.alg.actor_critic.state_dict(), ac_weight_path)
-                        wandb.save(ac_weight_path)
+                        warmup_done = it >= int(RunnerArgs.early_stop_warmup_iterations)
+                        patience_expired = (
+                            early_stop_best_it is not None
+                            and it - early_stop_best_it >= int(RunnerArgs.early_stop_patience_iterations)
+                        )
+                        early_stop_now = warmup_done and patience_expired
+                        if early_stop_now:
+                            print(
+                                "Early stopping: "
+                                f"{metric_name} EMA has not improved by {RunnerArgs.early_stop_min_delta} "
+                                f"for {RunnerArgs.early_stop_patience_iterations} iterations "
+                                f"(best_iteration={early_stop_best_it}, best_ema={early_stop_best:.6f}, "
+                                f"current_iteration={it}, current_ema={early_stop_ema:.6f})."
+                            )
+                            if RunnerArgs.early_stop_restore_best and early_stop_best_state is not None:
+                                self.alg.actor_critic.load_state_dict(early_stop_best_state)
+                                self._save_checkpoint(early_stop_best_it)
 
-                        ac_weight_path = f'{path}/ac_weights_latest.pt'
-                        torch.save(self.alg.actor_critic.state_dict(), ac_weight_path)
-                        wandb.save(ac_weight_path)
-
-                        adaptation_module_path = f'{path}/adaptation_module_{it}.jit'
-                        adaptation_module = copy.deepcopy(self.alg.actor_critic.adaptation_module).to('cpu')
-                        traced_script_adaptation_module = torch.jit.script(adaptation_module)
-                        traced_script_adaptation_module.save(adaptation_module_path)
-
-                        adaptation_module_path = f'{path}/adaptation_module_latest.jit'
-                        traced_script_adaptation_module.save(adaptation_module_path)
-
-                        body_path = f'{path}/body_{it}.jit'
-                        body_model = copy.deepcopy(self.alg.actor_critic.actor_body).to('cpu')
-                        traced_script_body_module = torch.jit.script(body_model)
-                        traced_script_body_module.save(body_path)
-
-                        body_path = f'{path}/body_latest.jit'
-                        traced_script_body_module.save(body_path)
-
-                        logger.upload_file(file_path=adaptation_module_path, target_path=f"checkpoints/", once=False)
-                        logger.upload_file(file_path=body_path, target_path=f"checkpoints/", once=False)
-
-                    ac_weights_path = f"{path}/ac_weights_{it}.pt"
-                    torch.save(self.alg.actor_critic.state_dict(), ac_weights_path)
-                    ac_weights_path = f"{path}/ac_weights_latest.pt"
-                    torch.save(self.alg.actor_critic.state_dict(), ac_weights_path)
-                    
-                    wandb.save(f"./tmp/legged_data/adaptation_module_{it}.jit")
-                    wandb.save(f"./tmp/legged_data/body_{it}.jit")
-                    wandb.save(f"./tmp/legged_data/ac_weights_{it}.pt")
-                    wandb.save(f"./tmp/legged_data/adaptation_module_latest.jit")
-                    wandb.save(f"./tmp/legged_data/body_latest.jit")
-                    wandb.save(f"./tmp/legged_data/ac_weights_latest.pt")
-                    
+            if self.multi_gpu:
+                early_stop_tensor = torch.tensor([int(early_stop_now)], device=self.device)
+                dist.broadcast(early_stop_tensor, 0)
+                early_stop_now = bool(early_stop_tensor.item())
 
             self.current_learning_iteration += num_learning_iterations
+
+            if early_stop_now:
+                break
 
         path = './tmp/legged_data'
 
