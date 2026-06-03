@@ -375,62 +375,55 @@ class Cfg(PrefixProto, cli=False):
         lag_timesteps_range = [6, 6]
         lag_timesteps_rand_interval_s = 10
 
-        # Domain randomization parameters for quadruped balancing on a yoga ball task.
+        # Domain randomization parameters for quadruped balancing on a yoga ball (sim-to-real transfer)
+        # The real yoga ball is hollow, bouncy, and deformable, while simulation models it as a rigid solid.
+        # Key transfer gaps: contact friction, restitution, and ground interaction.
+        # We randomize parameters that affect these aspects to make the policy robust.
         
-        # Task and sim-to-real gap:
-        # We are training a quadruped robot to balance on a yoga ball. 
-        # The simulation models the ball as a rigid solid, but the real yoga ball is hollow, bouncy, and deformable.
-        # This discrepancy makes the real-world contact dynamics different (softer, larger contact patch, variable bounce).
-        # We use domain randomization to make the policy robust to these unknown real-world properties within a fixed compute budget.
-        # The ranges below are chosen to be wide enough to encourage robustness without making training infeasible.
+        # Robot friction with ball: full range to cover increased grip from deformation
+        robot_friction_range = [1.0, 5.0]
         
-        # Robot friction affects foot grip on the ball. We randomize moderately to account for varying surface conditions.
-        robot_friction_range = [1.0, 3.0]
+        # Robot restitution with ball: full range to handle varying bounciness of the contact
+        robot_restitution_range = [0.0, 0.9]
         
-        # Robot restitution is less critical for the balancing task, so we use a narrow low range to avoid excessive energy return.
-        robot_restitution_range = [0.0, 0.3]
-        
-        # Payload mass variations simulate real robot mass changes (battery, sensors). We keep it narrow to not destabilize training.
+        # Small payload mass variation to simulate changes in robot mass distribution (e.g., equipment)
         robot_payload_mass_range = [-0.5, 0.5]
         
-        # Center of mass displacement is a small inherent offset. The full negative range is used to cover manufacturing tolerances.
+        # Center of mass displacement: full given range to account for slight manufacturing asymmetries
         robot_com_displacement_range = [-0.01, 0.0]
         
-        # Motor strength varies due to wear, voltage, etc. We use a small range since the allowed minimum is 1.0 (nominal).
-        robot_motor_strength_range = [1.0, 1.2]
+        # Motor strength variation: slight, to handle real motor inconsistencies without weakening too much
+        robot_motor_strength_range = [1.0, 1.3]
         
-        # Motor offsets simulate joint calibration errors. We apply a moderate negative range (only negative allowed by the parameter).
+        # Motor offset: small calibration errors
         robot_motor_offset_range = [-0.05, 0.0]
         
-        # Ball mass is fixed in simulation and cannot be randomized.
+        # Ball mass and friction are fixed in simulation (cannot be randomized)
         ball_mass_range = [1.0, 1.0]
-        
-        # Ball friction is fixed in simulation and cannot be randomized.
         ball_friction_range = [1.0, 1.0]
         
-        # Ball restitution helps mimic the bouncy nature of a real yoga ball. We vary it widely to cover different elastic behaviors.
+        # Ball restitution: randomize over a realistic range for a bouncy but slightly damped yoga ball
+        # Lower bound avoids unrealistic perfectly inelastic collisions, upper bound is max allowed
         ball_restitution_range = [0.3, 0.9]
         
-        # Ball drag is negligible for this task and kept at zero to avoid unnecessary randomization.
+        # Air drag on the ball is negligible for this task, keep it zero
         ball_drag_range = [0.0, 0.0]
         
-        # Ground friction influences ball slippage. We cover a range from low (slippery) to moderate (typical floor) to ensure robustness.
-        terrain_ground_friction_range = [0.1, 2.0]
+        # Ground friction (ball-floor contact): wide range to simulate various floor surfaces
+        terrain_ground_friction_range = [0.5, 10.0]
         
-        # Ground restitution accounts for varying floor hardness. We use a small range to avoid training on unrealistic bounces.
-        terrain_ground_restitution_range = [0.0, 0.2]
+        # Ground restitution: slightly inelastic to mimic energy loss in real floor interactions
+        terrain_ground_restitution_range = [0.0, 0.3]
         
-        # Terrain roughness adds small surface irregularities, making the policy tolerant to minor unevenness in real-world floors.
-        terrain_tile_roughness_range = [0.0, 1.5]
+        # Tile roughness: small unevenness to mimic real-world imperfections without making task too hard
+        terrain_tile_roughness_range = [0.0, 2.0]
         
-        # Random pushes on the robot during training improve disturbance rejection. Moderate velocities are used.
-        robot_push_vel_range = [0.0, 0.5]
+        # External pushes on robot and ball: small disturbances to learn balance recovery
+        robot_push_vel_range = [0.0, 0.3]
+        ball_push_vel_range = [0.0, 0.3]
         
-        # Random pushes on the ball simulate external disturbances (e.g., wind, bumps). Small velocities are sufficient.
-        ball_push_vel_range = [0.0, 0.2]
-        
-        # Gravity is kept at nominal value because real-world gravity does not vary significantly (and the range only allows up to 1.0).
-        gravity_range = [1.0, 1.0]
+        # Gravity: very slight variation around nominal (within allowed range) for robustness
+        gravity_range = [0.95, 1.0]
     
     class domain_rand_off(PrefixProto, cli=False):
         randomize = True

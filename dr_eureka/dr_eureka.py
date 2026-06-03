@@ -227,7 +227,7 @@ def main(cfg):
             continue
 
         with open(rl_filepath, 'w') as f:
-            command = f"python -u {ROOT_DIR}/{env_name}/{cfg.env.train_script} --iterations {cfg.env.train_iterations} --dr-config eureka --reward-config eureka"
+            command = f"python -u {ROOT_DIR}/{env_name}/{cfg.env.train_script} --iterations {cfg.env.train_iterations} --dr-config eureka --reward-config eureka --no-video"
             command = command.split(" ")
             if not cfg.use_wandb:
                 command.append("--no-wandb")
