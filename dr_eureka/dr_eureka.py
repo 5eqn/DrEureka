@@ -14,6 +14,8 @@ import pickle as pkl
 import json
 import hashlib
 import textwrap
+import sys
+import re
 
 from utils.misc import * 
 from utils.create_task import create_task
@@ -41,6 +43,19 @@ def llm_cache_path(env_name, model, messages, cfg):
     }
     cache_key = hashlib.sha256(json.dumps(cache_key_payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
     return Path(EUREKA_ROOT_DIR) / ".llm_cache" / f"{env_name}_dr_{cache_key}.json"
+
+def training_env(env_name):
+    env = os.environ.copy()
+    repo_paths = [
+        ROOT_DIR,
+        f"{ROOT_DIR}/{env_name}",
+        f"{ROOT_DIR}/forward_locomotion",
+    ]
+    existing_pythonpath = env.get("PYTHONPATH")
+    if existing_pythonpath:
+        repo_paths.append(existing_pythonpath)
+    env["PYTHONPATH"] = os.pathsep.join(repo_paths)
+    return env
 
 class ReusedTrainingRun:
     def poll(self):
@@ -227,11 +242,16 @@ def main(cfg):
             continue
 
         with open(rl_filepath, 'w') as f:
-            command = f"python -u {ROOT_DIR}/{env_name}/{cfg.env.train_script} --iterations {cfg.env.train_iterations} --dr-config eureka --reward-config eureka --no-video"
+            command = f"{sys.executable} -u {ROOT_DIR}/{env_name}/{cfg.env.train_script} --iterations {cfg.env.train_iterations} --dr-config eureka --reward-config eureka --no-video"
             command = command.split(" ")
+            if cfg.env.get("robot") is not None:
+                command += ["--robot", cfg.env.robot]
             if not cfg.use_wandb:
                 command.append("--no-wandb")
-            process = subprocess.Popen(command, stdout=f, stderr=f)
+            print("cwd =", os.getcwd())
+            print("log =", os.path.abspath(rl_filepath))
+            print("cmd = ", command)
+            process = subprocess.Popen(command, stdout=f, stderr=f, env=training_env(env_name))
         block_until_training(rl_filepath, success_keyword=cfg.env.success_keyword, failure_keyword=cfg.env.failure_keyword,
                                 log_status=True, iter_num=None, response_id=response_id, process=process)
         rl_runs.append(process)

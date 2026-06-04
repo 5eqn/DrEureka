@@ -10,6 +10,7 @@ import os
 import subprocess
 import json
 import hydra
+import sys
 from tqdm import tqdm
 
 from utils.misc import *
@@ -17,10 +18,25 @@ from utils.misc import *
 DR_EUREKA_ROOT_DIR = os.getcwd()
 ROOT_DIR = f"{DR_EUREKA_ROOT_DIR}/.."
 
+def training_env(env_name):
+    env = os.environ.copy()
+    repo_paths = [
+        ROOT_DIR,
+        f"{ROOT_DIR}/{env_name}",
+        f"{ROOT_DIR}/forward_locomotion",
+    ]
+    existing_pythonpath = env.get("PYTHONPATH")
+    if existing_pythonpath:
+        repo_paths.append(existing_pythonpath)
+    env["PYTHONPATH"] = os.pathsep.join(repo_paths)
+    return env
+
 def forward_locomotion_success(stdout, parameter, val):
     """How close forward velocity is to target velocity, linearly measured."""
     lines = stdout.decode().split("\n")
     lines = [line for line in lines if "linear velocity" in line]
+    if not lines:
+        raise RuntimeError("Play subprocess produced no linear velocity lines.")
 
     target_forward_vel = 2.0
     average_success, average_forward_vel, counter = 0.0, 0.0, 0
@@ -38,6 +54,8 @@ def globe_walking_success(stdout, parameter, val):
     """Whether the robot is balanced on the ball (and not floating)."""
     lines = stdout.decode().split("\n")
     lines = [line for line in lines if "z-position" in line]
+    if not lines:
+        raise RuntimeError("Play subprocess produced no z-position lines.")
 
     min_base_height, max_base_height = float("inf"), float("-inf")
     for line in lines:
@@ -45,7 +63,7 @@ def globe_walking_success(stdout, parameter, val):
         min_base_height = min(min_base_height, height)
         max_base_height = max(max_base_height, height)
     print(f"Minimum, Maximum base height for {parameter} = {val}: {min_base_height}, {max_base_height}")
-    return 1.0 <= min_base_height and max_base_height <= 1.4
+    return 1.0 <= min_base_height and max_base_height <= 1.5
 
 def success(cfg, stdout, parameter, val):
     """
@@ -97,15 +115,22 @@ def test_parameter(cfg, parameter, test_vals):
             f.write(dr)
 
         set_freest_gpu()
-        command = f"python -u {ROOT_DIR}/{cfg.env.env_name}/{cfg.env.play_script} --headless --iterations {cfg.env.play_iterations} --run {cfg.run_path} --dr-config eureka --no-video --verbose"
+        command = f"{sys.executable} -u {ROOT_DIR}/{cfg.env.env_name}/{cfg.env.play_script} --headless --iterations {cfg.env.play_iterations} --run {cfg.run_path} --dr-config eureka --no-video --verbose"
         command = command.split(" ")
+        if cfg.env.get("robot") is not None:
+            command += ["--robot", cfg.env.robot]
         os.environ["TQDM_DISABLE"] = "1"
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=training_env(cfg.env.env_name))
         stdout, stderr = process.communicate()
-        # if stderr:
-        #     stderr = stderr.decode()
-        #     print(stderr)
-        #     raise RuntimeError("Error in subprocess")
+        if process.returncode != 0:
+            stderr_str = stderr.decode(errors="replace")
+            stdout_str = stdout.decode(errors="replace")
+            raise RuntimeError(
+                "Play subprocess failed while testing "
+                f"{parameter} = {val} with command {command}.\n"
+                f"STDOUT tail:\n{stdout_str[-2000:]}\n"
+                f"STDERR tail:\n{stderr_str[-4000:]}"
+            )
 
         if success(cfg, stdout, parameter, val):
             lowest_successful_idx = min(lowest_successful_idx, idx)

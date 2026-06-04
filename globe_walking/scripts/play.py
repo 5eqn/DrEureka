@@ -15,6 +15,7 @@ import wandb
 from globe_walking.go1_gym.envs import *
 from globe_walking.go1_gym.envs.base.legged_robot_config import Cfg
 from globe_walking.go1_gym.envs.go1.go1_config import config_go1
+from globe_walking.go1_gym.envs.go2.go2_config import config_go2
 from globe_walking.go1_gym.envs.go1.velocity_tracking import VelocityTrackingEasyEnv
 
 from tqdm import tqdm
@@ -40,15 +41,26 @@ def load_policy(label):
     return policy
 
 
-def load_env(label, headless=False, dr_config="off", save_video=True):
+def configure_robot(robot):
+    robot_configs = {
+        "go1": config_go1,
+        "go2": config_go2,
+    }
+    if robot not in robot_configs:
+        raise ValueError(f"Invalid robot: {robot}")
+    robot_configs[robot](Cfg)
+    Cfg.robot.name = robot
+
+
+def load_env(label, headless=False, dr_config="off", save_video=True, robot="go1"):
     # Will be overwritten by the loaded config from parameters.pkl
     Cfg.env = Cfg.env_mini
     Cfg.sensors = Cfg.sensors_mini
     Cfg.terrain = Cfg.terrain_mini
     Cfg.domain_rand = Cfg.domain_rand_off
     Cfg.sim.physx = Cfg.sim.physx_mini
+    configure_robot(robot)
 
-    config_go1(Cfg)
     if os.path.exists(label + "/config.yaml"):
         with open(label + "/config.yaml", 'rb') as file: 
             cfg = yaml.safe_load(file)
@@ -81,6 +93,7 @@ def load_env(label, headless=False, dr_config="off", save_video=True):
                 #     print(f"Overwriting {key} from {getattr(cfg, key)} to {value}")
                 setattr(cfg, key, value)
     set_cfg_recursive(Cfg, cfg)
+    Cfg.robot.name = robot
     Cfg.multi_gpu = False
 
     if dr_config == "eureka":
@@ -105,7 +118,8 @@ def load_env(label, headless=False, dr_config="off", save_video=True):
     Cfg.terrain.center_span = 1
     Cfg.terrain.teleport_robots = True
 
-    Cfg.control.control_type = "actuator_net"
+    if Cfg.robot.name == "go1":
+        Cfg.control.control_type = "actuator_net"
 
     # The following are a series of tests to verify that DR is working as expected
     if False:
@@ -194,9 +208,9 @@ def load_env(label, headless=False, dr_config="off", save_video=True):
     return env, policy
 
 
-def play_go1(iterations, headless=True, label=None, dr_config="off", verbose=False, save_video=False):
+def play_go1(iterations, headless=True, label=None, dr_config="off", verbose=False, save_video=False, robot="go1"):
     label = os.path.join(label, "checkpoints")
-    env, policy = load_env(label, headless=headless, dr_config=dr_config, save_video=save_video)
+    env, policy = load_env(label, headless=headless, dr_config=dr_config, save_video=save_video, robot=robot)
 
     measured_x_vels = np.zeros(iterations)
     measured_global_x_vels = np.zeros(iterations)
@@ -286,6 +300,7 @@ if __name__ == '__main__':
     parser.add_argument("--dr-config", type=str, required=True, choices=["mini", "full", "eureka", "off", "load"])
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--no-video", action="store_true")
+    parser.add_argument("--robot", type=str, default="go1", choices=["go1", "go2"])
     args = parser.parse_args()
 
-    play_go1(iterations=args.iterations, headless=args.headless, label=args.run, dr_config=args.dr_config, verbose=args.verbose, save_video=not args.no_video)
+    play_go1(iterations=args.iterations, headless=args.headless, label=args.run, dr_config=args.dr_config, verbose=args.verbose, save_video=not args.no_video, robot=args.robot)
