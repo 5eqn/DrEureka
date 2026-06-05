@@ -12,6 +12,7 @@ PRETRAINED_DOMAIN_RAND = {
     "robot_com_displacement_range": [-0.05, 0.05],
     "robot_motor_strength_range": [0.95, 1.05],
     "robot_motor_offset_range": [-0.005, 0.05],
+    "ball_radius_range": [0.45, 0.55],
     "ball_mass_range": [1.0, 3.0],
     "ball_friction_range": [0.5, 2.5],
     "ball_restitution_range": [0.4, 0.9],

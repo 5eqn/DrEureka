@@ -375,7 +375,71 @@ class Cfg(PrefixProto, cli=False):
         lag_timesteps_range = [6, 6]
         lag_timesteps_rand_interval_s = 10
 
-        robot_restitution_range = [0.7, 0.7]
+        # Domain randomization parameters for Go2 balancing on a yoga ball
+        # The real ball is hollow, bouncy, deformable; sim ball is rigid.
+        # We randomize properties that affect contact dynamics and system inertia
+        # to bridge the sim-to-real gap while keeping training feasible.
+        
+        # Robot foot friction: real feet are rubbery, so moderate to high grip.
+        # Avoid excessive randomization to very low values to keep task learnable.
+        robot_friction_range = [0.5, 1.0]
+        
+        # Robot foot restitution: feet are not bouncy, impacts are damped.
+        # Low values help simulate the soft, energy-absorbing contact with a deformable ball.
+        robot_restitution_range = [0.0, 0.3]
+        
+        # Additional mass on robot base: simulates payloads (batteries, sensors).
+        # Realistic variation of a few kilograms, within the allowed range.
+        robot_payload_mass_range = [-2.0, 1.0]
+        
+        # Center of mass displacement: accounts for asymmetric builds and payloads.
+        # Kept moderate to avoid extreme imbalance while still providing variation.
+        robot_com_displacement_range = [-0.03, 0.01]
+        
+        # Motor strength multiplier: real motors may be weaker due to battery/aging.
+        # Small weakening and slight strengthening to encourage robustness.
+        robot_motor_strength_range = [0.9, 1.1]
+        
+        # Motor offset: joint calibration errors present in hardware.
+        # Minor offsets are realistic; larger ones would break balancing.
+        robot_motor_offset_range = [-0.03, 0.03]
+        
+        # Ball mass: real hollow yoga ball is much lighter than a solid sim ball.
+        # Focus on lower mass values; ensure the policy can handle a light, easily moved ball.
+        ball_mass_range = [0.5, 3.0]
+        
+        # Ball surface friction with robot feet: PVC ball has decent grip.
+        # Higher values, but include some lower friction for dusty surfaces.
+        ball_friction_range = [0.4, 1.0]
+        
+        # Ball restitution: real ball deforms, reducing bounce; a rigid sim ball would
+        # bounce unrealistically if restitution is high. Low–moderate values mimic energy loss.
+        ball_restitution_range = [0.0, 0.5]
+        
+        # Ball drag (linear damping): simulates deformation/internal damping and rolling resistance.
+        # Moderate drag helps stabilize the ball without making it too sluggish.
+        ball_drag_range = [0.5, 3.0]
+        
+        # Ground friction (ball rolling surface): typical indoor floors.
+        # Slight randomization to cover wood, mats, etc.
+        terrain_ground_friction_range = [0.4, 1.0]
+        
+        # Ground restitution: floor is hard but little bounce for a ball, keep low.
+        terrain_ground_restitution_range = [0.0, 0.2]
+        
+        # Ground roughness: real floors are mostly flat; tiny imperfections only.
+        terrain_tile_roughness_range = [0.0, 0.02]
+        
+        # External pushes to robot base: trains reactive balancing.
+        # Moderate velocities, not too aggressive to maintain learning stability.
+        robot_push_vel_range = [0.0, 0.4]
+        
+        # External pushes to ball: trains compensation for ball disturbances.
+        # Limited to 1.0 m/s to avoid impossible perturbations.
+        ball_push_vel_range = [0.0, 1.0]
+        
+        # Gravity variation: not needed in the real world, set to zero to save compute.
+        gravity_range = [0.0, 0.0]
     
     class domain_rand_off(PrefixProto, cli=False):
         randomize = True
@@ -624,3 +688,4 @@ def set_seed(seed, torch_deterministic=False, rank=0):
 
 rank = int(os.getenv("LOCAL_RANK", "0"))
 set_seed(0 + rank, torch_deterministic=False)
+
