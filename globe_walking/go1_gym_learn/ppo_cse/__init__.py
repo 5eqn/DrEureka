@@ -100,6 +100,7 @@ class Runner:
         if self.multi_gpu:
             self.rank = int(os.getenv("LOCAL_RANK", "0"))
             self.rank_size = int(os.getenv("WORLD_SIZE", "1"))
+            torch.cuda.set_device(self.rank)
             dist.init_process_group("nccl", rank=self.rank, world_size=self.rank_size)
 
             self.device_name = 'cuda:' + str(self.rank)
@@ -186,9 +187,8 @@ class Runner:
 
         if self.multi_gpu:
             print("====================broadcasting parameters")
-            model_params = [self.alg.actor_critic.state_dict()]
-            dist.broadcast_object_list(model_params, 0)
-            self.alg.actor_critic.load_state_dict(model_params[0])
+            for param in self.alg.actor_critic.state_dict().values():
+                dist.broadcast(param, 0)
 
         # trigger_sync = TriggerWandbSyncHook()
         if self.rank == 0:
@@ -352,7 +352,7 @@ class Runner:
                                 self.alg.actor_critic.load_state_dict(early_stop_best_state)
                                 self._save_checkpoint(early_stop_best_it)
 
-            if self.multi_gpu:
+            if self.multi_gpu and RunnerArgs.early_stop_enabled:
                 early_stop_tensor = torch.tensor([int(early_stop_now)], device=self.device)
                 dist.broadcast(early_stop_tensor, 0)
                 early_stop_now = bool(early_stop_tensor.item())

@@ -277,6 +277,7 @@ def train_go1(
 
     if Cfg.multi_gpu:
         rank = int(os.getenv("LOCAL_RANK", "0"))
+        torch.cuda.set_device(rank)
         device = f'cuda:{rank}'
     else:
         device = 'cuda:0'
